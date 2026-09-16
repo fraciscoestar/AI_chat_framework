@@ -1,0 +1,20 @@
+{
+  "name": "ai-chat-framework-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm --workspace=apps/demo run dev",
+    "build:package": "npm --workspace=packages/ai-chat-suite run build",
+    "build:demo": "npm --workspace=apps/demo run build",
+    "build": "npm run build:package && npm run build:demo",
+    "test": "node --test packages/ai-chat-suite/test/vfs_and_storage.test.mjs",
+    "lint": "npm --workspace=packages/ai-chat-suite run lint"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
