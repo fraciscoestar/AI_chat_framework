@@ -1,4 +1,5 @@
 import { SkillSummary } from './skills';
+import { ToolDefinition } from './tools';
 import { VirtualArtifact } from './workspace';
 export type { VirtualArtifact };
 
@@ -98,10 +99,13 @@ export interface ChatPayload {
   messages: ChatMessage[];
   currentPrompt: string;
   skills: SkillSummary[];
+  tools?: ToolDefinition[];
+  files?: Array<{ path: string; content: string }>;
   activeWorkspaceId?: string;
   isEphemeral?: boolean;
   model?: string;
   effort?: string;
+  streamThinking?: boolean;
 }
 
 /**

@@ -18,6 +18,8 @@ export interface MessageListProps {
   onSwitchSibling?: (siblingId: string) => void;
   onEditUserMessage?: (messageId: string, newContent: string) => void;
   onRegenerateAssistantMessage?: (messageId: string) => void;
+  isStreaming?: boolean;
+  streamThinking?: boolean;
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
@@ -34,6 +36,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   onSwitchSibling,
   onEditUserMessage,
   onRegenerateAssistantMessage,
+  isStreaming,
+  streamThinking,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -155,8 +159,9 @@ export const MessageList: React.FC<MessageListProps> = ({
         </div>
       ) : (
         <div className="py-4 max-w-3xl mx-auto w-full">
-          {messages.map((msg) => {
+          {messages.map((msg, idx) => {
             const { siblings, currentIndex } = getMessageSiblings(conversationPool, msg.id);
+            const isLastMessage = idx === messages.length - 1;
             return (
               <MessageBubble
                 key={msg.id}
@@ -171,6 +176,8 @@ export const MessageList: React.FC<MessageListProps> = ({
                 onSwitchSibling={onSwitchSibling}
                 onEditUserMessage={onEditUserMessage}
                 onRegenerateAssistantMessage={onRegenerateAssistantMessage}
+                isStreaming={isStreaming && isLastMessage && msg.role === 'assistant'}
+                streamThinking={streamThinking}
               />
             );
           })}

@@ -70,6 +70,9 @@ export interface AIChatSuiteProps {
   allowRegeneration?: boolean;
   allowEditingUserMessages?: boolean;
 
+  // Stream thinking process to user (opt-in)
+  streamThinking?: boolean;
+
   // Theming & layout
   theme?: 'dark' | 'light' | 'system';
   className?: string;
@@ -94,6 +97,7 @@ export const AIChatSuite: React.FC<AIChatSuiteProps> = ({
   onAddAttachment,
   allowRegeneration = false,
   allowEditingUserMessages = false,
+  streamThinking = false,
   theme = 'system',
   className = '',
 }) => {
@@ -403,22 +407,63 @@ export const AIChatSuite: React.FC<AIChatSuiteProps> = ({
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
 
+      // Collect all workspace files in the VFS & artifacts to sync with server proxy
+      const workspaceFilesMap = new Map<string, { path: string; content: string }>();
+      if (vfs) {
+        try {
+          const files = await vfs.listFiles();
+          for (const f of files) {
+            workspaceFilesMap.set(f.path, { path: f.path, content: f.content });
+          }
+        } catch {
+          // Ignore VFS list errors
+        }
+      }
+
+      // Ensure all conversation artifacts and past message artifacts are captured and in VFS
+      const convArtifacts = [
+        ...(activeConversation?.artifacts || []),
+        ...messagesForPrompt.flatMap((m) => m.artifacts || []),
+      ];
+      for (const art of convArtifacts) {
+        const normPath = art.filename.startsWith('/') ? art.filename : `/${art.filename}`;
+        if (!workspaceFilesMap.has(normPath)) {
+          workspaceFilesMap.set(normPath, { path: normPath, content: art.content });
+        }
+        if (vfs) {
+          try {
+            const exists = await vfs.exists(normPath);
+            if (!exists) {
+              await vfs.writeFile(normPath, art.content);
+            }
+          } catch {
+            // Ignore
+          }
+        }
+      }
+
       const payload: ChatPayload = {
         conversationId: convId,
         messages: messagesForPrompt,
         currentPrompt: currentPromptText,
         skills: skillSummaries,
+        tools: toolManager.getToolDefinitions({
+          enableWorkspace: true,
+          enablePython: pythonExecutionEnabled,
+        }),
+        files: Array.from(workspaceFilesMap.values()),
         isEphemeral,
         model: internalModelId,
         effort: internalEffortId,
+        streamThinking,
       };
 
       const executionBlocks: ExecutionBlock[] = [];
+      let accumulatedText = '';
+      let accumulatedThinking = '';
 
       try {
         const streamResult = await onSendMessage(payload);
-        let accumulatedText = '';
-        let accumulatedThinking = '';
 
         const getActiveToolGroup = (): ExecutionGroup => {
           const last = executionBlocks[executionBlocks.length - 1];
@@ -513,44 +558,60 @@ export const AIChatSuite: React.FC<AIChatSuiteProps> = ({
                 (lastBlock as { type: string }).type = 'commentary';
               }
 
+              let toolName = event.name;
+              let toolArgs: Record<string, unknown> = event.args || {};
+
+              // Defensively normalize stringified JSON tool names (emitted by some Ollama / vLLM / Qwen proxies)
+              if (typeof toolName === 'string' && toolName.trim().startsWith('{') && toolName.trim().endsWith('}')) {
+                try {
+                  const inner = JSON.parse(toolName.trim());
+                  if (inner.name || inner.tool || inner.function) {
+                    toolName = inner.name || inner.tool || inner.function;
+                    toolArgs = { ...(inner.args || inner.parameters || inner.arguments || {}), ...toolArgs };
+                  }
+                } catch {
+                  // Keep as is
+                }
+              }
+
               const newToolCall = {
                 id: event.id,
-                name: event.name,
-                args: event.args,
+                name: toolName,
+                args: toolArgs,
                 status: 'running' as const,
               };
 
               const group = getActiveToolGroup();
 
               let kind: ExecutionStepKind = 'tool';
-              let title = String(event.args.title || event.args.description || event.args.reason || '');
+              let title = String(toolArgs.title || toolArgs.description || toolArgs.reason || '');
               let filename: string | undefined = undefined;
 
-              if (event.args.path) {
-                filename = String(event.args.path).split('/').pop();
+              if (toolArgs.path) {
+                filename = String(toolArgs.path).split('/').pop();
               }
 
-              if (event.name === 'workspace_read_file') {
+              if (toolName === 'workspace_read_file') {
                 kind = 'read';
                 if (!title) title = filename ? `View ${filename}` : 'Read file';
-              } else if (event.name === 'workspace_edit_file') {
+              } else if (toolName === 'workspace_edit_file') {
                 kind = 'edit';
                 if (!title) title = filename ? `Edit ${filename}` : 'Edit file';
-              } else if (event.name === 'workspace_write_file') {
+              } else if (toolName === 'workspace_write_file') {
                 kind = 'edit';
                 if (!title) title = filename ? `Create ${filename}` : 'Create file';
-              } else if (event.name === 'workspace_present_file') {
+              } else if (toolName === 'workspace_present_file') {
                 kind = 'present';
                 title = 'Presented file';
-              } else if (event.name === 'python_eval') {
+              } else if (toolName === 'python_eval') {
                 kind = 'command';
-                if (!title) title = String(event.args.command || event.args.name || 'Execute Python script');
-              } else if (event.name === 'agent_note' || event.name === 'note') {
+                if (!title) title = String(toolArgs.command || toolArgs.name || 'Execute Python script');
+              } else if (toolName === 'agent_note' || toolName === 'note') {
                 kind = 'note';
-                title = String(event.args.note || event.args.text || title || 'Note');
+                title = String(toolArgs.note || toolArgs.text || title || 'Note');
               } else {
                 kind = 'tool';
-                if (!title) title = `Execute ${event.name}`;
+                if (!title) title = `Execute ${toolName}`;
               }
 
               const step: ExecutionStep = {
@@ -581,8 +642,8 @@ export const AIChatSuite: React.FC<AIChatSuiteProps> = ({
               try {
                 const execResult = await toolManager.executeTool({
                   id: event.id,
-                  name: event.name,
-                  args: event.args,
+                  name: toolName,
+                  args: toolArgs,
                   userId,
                   conversationId: convId,
                 });
@@ -606,7 +667,7 @@ export const AIChatSuite: React.FC<AIChatSuiteProps> = ({
                 }
 
                 // If tool presented a file via workspace_present_file, surface artifact in drawer and assistant message
-                if (event.name === 'workspace_present_file' && execResult.result && !execResult.isError) {
+                if (toolName === 'workspace_present_file' && execResult.result && !execResult.isError) {
                   try {
                     const artResult = execResult.result as { artifactId: string; path: string; title: string };
                     const content = await vfs.readFile(artResult.path);
@@ -694,12 +755,12 @@ export const AIChatSuite: React.FC<AIChatSuiteProps> = ({
 
                 // If tool edited or modified an existing presented artifact via workspace_edit_file or workspace_write_file
                 if (
-                  (event.name === 'workspace_edit_file' || event.name === 'workspace_write_file') &&
+                  (toolName === 'workspace_edit_file' || toolName === 'workspace_write_file') &&
                   execResult.result &&
                   !execResult.isError
                 ) {
                   try {
-                    const pathStr = String(event.args.path || '');
+                    const pathStr = String(toolArgs.path || '');
                     const filename = pathStr.split('/').pop() || '';
                     const newContent = await vfs.readFile(pathStr);
                     const updateArtifactList = (arts: VirtualArtifact[] = []) =>
@@ -899,11 +960,87 @@ export const AIChatSuite: React.FC<AIChatSuiteProps> = ({
           }
         }
 
+        // Safety fallback: if files were written in sandbox but workspace_present_file was never called,
+        // automatically surface the file as an artifact card and drawer entry
+        const hasPresentedCard = executionBlocks.some((b) => b.type === 'artifact-card');
+        const writeStep = executionBlocks
+          .flatMap((b) => (b.type === 'tool-group' ? b.group.steps : []))
+          .reverse()
+          .find((s) => s.kind === 'edit' && s.status === 'completed' && s.filename);
+
+        if (!hasPresentedCard && writeStep && writeStep.filename && vfs) {
+          try {
+            const allFiles = await vfs.listFiles();
+            const matched = allFiles.find((f) => f.path.endsWith(writeStep.filename!));
+            if (matched) {
+              const content = await vfs.readFile(matched.path);
+              const filename = writeStep.filename;
+              const ext = filename.split('.').pop()?.toLowerCase() || '';
+              const language =
+                ext === 'py' ? 'python' :
+                ext === 'js' ? 'javascript' :
+                ext === 'ts' ? 'typescript' :
+                ext === 'tsx' ? 'tsx' :
+                ext === 'jsx' ? 'jsx' :
+                ext === 'json' ? 'json' :
+                ext === 'html' ? 'html' :
+                ext === 'css' ? 'css' :
+                ext === 'md' ? 'markdown' :
+                'text';
+              const artifactType: ArtifactType =
+                language === 'markdown' ? 'document' :
+                language === 'html' ? 'application' :
+                'code';
+
+              const autoArt: VirtualArtifact = {
+                id: `art_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                title: filename.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' '),
+                filename,
+                language,
+                type: artifactType,
+                content,
+                createdAt: matched.updatedAt || Date.now(),
+                updatedAt: matched.updatedAt || Date.now(),
+              };
+
+              executionBlocks.push({
+                type: 'artifact-card',
+                id: `card_${autoArt.id}`,
+                artifact: autoArt,
+              });
+              setActiveArtifactId(autoArt.id);
+              setRightDrawerOpen(true);
+
+              if (isEphemeral) {
+                setDraftConversation((prev) => {
+                  if (!prev) return prev;
+                  const existing = prev.artifacts || [];
+                  return {
+                    ...prev,
+                    artifacts: [...existing.filter((a) => a.id !== autoArt.id), autoArt],
+                  };
+                });
+              } else {
+                setConversations((prev) =>
+                  prev.map((c) => {
+                    if (c.id !== convId) return c;
+                    const existing = c.artifacts || [];
+                    return { ...c, artifacts: [...existing.filter((a) => a.id !== autoArt.id), autoArt] };
+                  })
+                );
+              }
+            }
+          } catch (autoErr) {
+            console.warn('[AIChatSuite] Auto-present artifact fallback warning:', autoErr);
+          }
+        }
+
         updateConversationMessages(convId, isEphemeral, (msgs) =>
           msgs.map((m) =>
             m.id === assistantMessageId
               ? {
                   ...m,
+                  thinking: accumulatedThinking || m.thinking,
                   executionBlocks: [...executionBlocks],
                 }
               : m
@@ -1279,6 +1416,8 @@ export const AIChatSuite: React.FC<AIChatSuiteProps> = ({
             onSwitchSibling={handleSwitchSibling}
             onEditUserMessage={handleEditUserMessage}
             onRegenerateAssistantMessage={handleRegenerateAssistantMessage}
+            isStreaming={isStreaming}
+            streamThinking={streamThinking}
           />
 
           {/* Input Bar */}

@@ -11,6 +11,7 @@ import {
   Check,
   Edit2,
   RotateCw,
+  Loader2,
 } from 'lucide-react';
 import { ChatMessage, VirtualArtifact } from '../../types/chat';
 import { MarkdownViewer } from '../../rendering/MarkdownViewer';
@@ -30,6 +31,8 @@ export interface MessageBubbleProps {
   onSwitchSibling?: (siblingId: string) => void;
   onEditUserMessage?: (messageId: string, newContent: string) => void;
   onRegenerateAssistantMessage?: (messageId: string) => void;
+  isStreaming?: boolean;
+  streamThinking?: boolean;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
@@ -44,11 +47,45 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onSwitchSibling,
   onEditUserMessage,
   onRegenerateAssistantMessage,
+  isStreaming = false,
+  streamThinking = false,
 }) => {
-  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [userToggledThinking, setUserToggledThinking] = useState<boolean | null>(null);
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
+
+  // Check if assistant is currently executing tools or multi-step tasks
+  const hasRunningTools = Boolean(
+    message.toolCalls?.some((tc) => tc.status === 'running') ||
+    message.executionBlocks?.some(
+      (b) => b.type === 'tool-group' && b.group.steps.some((s) => s.status === 'running')
+    )
+  );
+
+  // Check if final response text is actively streaming
+  const lastBlock = message.executionBlocks?.[message.executionBlocks.length - 1];
+  const isStreamingFinalResponse = Boolean(
+    lastBlock?.type === 'response-text' && lastBlock.content.trim().length > 0
+  );
+
+  // Active thinking indicator: active while streaming whenever not actively outputting the final response text,
+  // or when tools are running or between multi-turn execution steps.
+  const isThinkingActive = Boolean(
+    isStreaming && (!isStreamingFinalResponse || hasRunningTools)
+  );
+
+  // If user explicitly toggled, respect their choice; otherwise auto-expand if streamThinking opt-in is enabled
+  const thinkingExpanded =
+    userToggledThinking !== null
+      ? userToggledThinking
+      : Boolean(streamThinking);
+
+  // Persist thinking box whenever real thinking content exists, or while actively streaming with streamThinking
+  const showThinkingBox = Boolean(
+    (message.thinking && message.thinking.trim().length > 0) ||
+    (streamThinking && isStreaming && isThinkingActive)
+  );
 
   const isUser = message.role === 'user';
   const hasSiblings = siblings.length > 1;
@@ -194,27 +231,62 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
         <div className="flex-1 min-w-0">
           {/* Thinking Collapsible Accordion (DeepSeek, Claude 3.7, Qwen, etc.) */}
-          {message.thinking && (
-            <div className="mb-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/30 overflow-hidden text-xs">
+          {showThinkingBox && (
+            <div className="mb-3 rounded-xl border border-slate-200/80 dark:border-zinc-800/80 bg-slate-50/70 dark:bg-zinc-900/40 overflow-hidden text-xs shadow-xs">
               <button
                 type="button"
-                onClick={() => setThinkingExpanded(!thinkingExpanded)}
-                className="w-full px-3 py-1.5 flex items-center justify-between text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+                onClick={() => setUserToggledThinking(!thinkingExpanded)}
+                className="w-full px-3.5 py-2 flex items-center justify-between text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer select-none"
               >
-                <div className="flex items-center gap-1.5 font-medium">
-                  <Brain className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Thought Process</span>
+                <div className="flex items-center gap-2 font-medium">
+                  <Brain
+                    className={`w-3.5 h-3.5 ${
+                      isThinkingActive ? 'text-amber-500 animate-pulse' : 'text-amber-500/80'
+                    }`}
+                  />
+                  {isThinkingActive ? (
+                    <span className="text-amber-600 dark:text-amber-400 flex items-center gap-1.5 font-medium">
+                      <span>Thinking...</span>
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-700 dark:text-slate-300">Thought Process</span>
+                      {message.thinking && (
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+                          ({message.thinking.trim().split(/\s+/).length} words)
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                {thinkingExpanded ? (
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                )}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-slate-400">
+                    {thinkingExpanded ? 'Hide' : 'Show'}
+                  </span>
+                  {thinkingExpanded ? (
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                  )}
+                </div>
               </button>
 
               {thinkingExpanded && (
-                <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 text-xs italic leading-relaxed whitespace-pre-wrap font-serif">
-                  {message.thinking}
+                <div className="px-3.5 py-2.5 border-t border-slate-200/60 dark:border-zinc-800/60 bg-white/40 dark:bg-zinc-950/40 text-slate-600 dark:text-slate-300 text-xs font-mono leading-relaxed whitespace-pre-wrap select-text max-h-80 overflow-y-auto">
+                  {message.thinking ? (
+                    <>
+                      <span>{message.thinking}</span>
+                      {isThinkingActive && (
+                        <span className="inline-block w-1.5 h-3 ml-1 bg-amber-500 animate-pulse align-middle" />
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2 py-1 text-slate-400 italic">
+                      <Loader2 className="w-3 h-3 animate-spin text-amber-500" />
+                      <span>Formulating reasoning and plan...</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -310,11 +382,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                   <MarkdownViewer content={message.content} />
                 </div>
               ) : (
-                !message.toolCalls?.length && (
-                  <div className="flex items-center gap-1.5 text-slate-400 text-xs py-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse delay-150" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse delay-300" />
+                !message.toolCalls?.length && !showThinkingBox && (
+                  <div className="flex items-center gap-2 text-xs py-1.5 px-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 w-fit my-1">
+                    <Brain className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                    <span className="font-medium">Thinking...</span>
+                    <span className="flex items-center gap-1 ml-0.5">
+                      <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" />
+                      <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce [animation-delay:150ms]" />
+                      <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce [animation-delay:300ms]" />
+                    </span>
                   </div>
                 )
               )}

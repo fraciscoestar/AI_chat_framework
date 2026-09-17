@@ -79,7 +79,17 @@ export class VirtualFileSystem {
   async readFile(rawPath: string): Promise<string> {
     const safePath = normalizeVirtualPath(rawPath);
     const files = await this.listFiles();
-    const file = files.find((f) => f.path === safePath);
+    let file = files.find((f) => f.path === safePath);
+    if (!file) {
+      const lowerSafe = safePath.toLowerCase();
+      const rawBase = rawPath.replace(/\\/g, '/').split('/').pop()?.toLowerCase() || '';
+      file = files.find(
+        (f) =>
+          f.path.toLowerCase() === lowerSafe ||
+          f.name.toLowerCase() === rawBase ||
+          f.path.toLowerCase().endsWith('/' + rawBase)
+      );
+    }
     if (!file) {
       throw new Error(`File not found in sandbox: ${safePath}`);
     }
@@ -87,15 +97,33 @@ export class VirtualFileSystem {
   }
 
   async exists(rawPath: string): Promise<boolean> {
-    const safePath = normalizeVirtualPath(rawPath);
-    const files = await this.listFiles();
-    return files.some((f) => f.path === safePath);
+    try {
+      await this.readFile(rawPath);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async stat(rawPath: string): Promise<VirtualFile | undefined> {
-    const safePath = normalizeVirtualPath(rawPath);
-    const files = await this.listFiles();
-    return files.find((f) => f.path === safePath);
+    try {
+      const safePath = normalizeVirtualPath(rawPath);
+      const files = await this.listFiles();
+      let file = files.find((f) => f.path === safePath);
+      if (!file) {
+        const lowerSafe = safePath.toLowerCase();
+        const rawBase = rawPath.replace(/\\/g, '/').split('/').pop()?.toLowerCase() || '';
+        file = files.find(
+          (f) =>
+            f.path.toLowerCase() === lowerSafe ||
+            f.name.toLowerCase() === rawBase ||
+            f.path.toLowerCase().endsWith('/' + rawBase)
+        );
+      }
+      return file;
+    } catch {
+      return undefined;
+    }
   }
 
   async deleteFile(rawPath: string): Promise<void> {

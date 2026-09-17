@@ -71,6 +71,7 @@ import {
   Terminal,
   Globe,
   Layers,
+  Brain,
 } from 'lucide-react';
 
 const DEMO_RENDERERS = {
@@ -82,6 +83,7 @@ export default function DemoPage() {
   const [theme, setTheme] = useState<'dark' | 'light'>('light');
   const [mode, setMode] = useState<'simulator' | 'live'>('simulator');
   const [pythonEnabled, setPythonEnabled] = useState(true);
+  const [streamThinking, setStreamThinking] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
   // Live LLM custom configuration
@@ -100,9 +102,9 @@ export default function DemoPage() {
         setTheme('dark');
       }
 
-      // Also restore saved mode and live endpoint config if present
+      // Also restore saved mode, live endpoint config, and streamThinking opt-in
       const savedMode = localStorage.getItem('ai_chat_mode') as 'simulator' | 'live' | null;
-      if (savedMode === 'simulator' | savedMode === 'live') setMode(savedMode);
+      if (savedMode === 'simulator' || savedMode === 'live') setMode(savedMode);
       const savedEndpoint = localStorage.getItem('ai_chat_endpoint');
       if (savedEndpoint) setEndpointUrl(savedEndpoint);
       const savedModel = localStorage.getItem('ai_chat_model');
@@ -112,10 +114,19 @@ export default function DemoPage() {
       }
       const savedApiKey = localStorage.getItem('ai_chat_api_key');
       if (savedApiKey) setApiKey(savedApiKey);
+      const savedStreamThinking = localStorage.getItem('ai_chat_stream_thinking');
+      if (savedStreamThinking !== null) setStreamThinking(savedStreamThinking === 'true');
     } catch {
       // Ignore localStorage errors
     }
   }, []);
+
+  // Sync theme with document.documentElement for Tailwind dark: classes and observers
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+    }
+  }, [theme]);
 
   const handleToggleTheme = () => {
     setTheme((prev) => {
@@ -138,12 +149,25 @@ export default function DemoPage() {
     }
   };
 
+  const handleToggleStreamThinking = () => {
+    setStreamThinking((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('ai_chat_stream_thinking', String(next));
+      } catch {
+        // Ignore
+      }
+      return next;
+    });
+  };
+
   const handleSaveEndpointConfig = () => {
     const trimmedModel = model.trim();
     try {
       localStorage.setItem('ai_chat_mode', mode);
       localStorage.setItem('ai_chat_endpoint', endpointUrl);
       localStorage.setItem('ai_chat_model', trimmedModel);
+      localStorage.setItem('ai_chat_stream_thinking', String(streamThinking));
       if (apiKey) {
         localStorage.setItem('ai_chat_api_key', apiKey);
       } else {
@@ -206,6 +230,10 @@ export default function DemoPage() {
               model: targetModel,
               effort: payload.effort,
               apiKey,
+              skills: sampleSkills,
+              tools: payload.tools,
+              files: payload.files,
+              streamThinking,
             }),
           });
         } catch (fetchErr: unknown) {
@@ -316,6 +344,20 @@ export default function DemoPage() {
 
         {/* Right controls */}
         <div className="flex items-center gap-2">
+          {/* Live Stream Thinking Opt-In badge */}
+          <button
+            onClick={handleToggleStreamThinking}
+            className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded border transition-colors cursor-pointer text-xs ${
+              streamThinking
+                ? 'border-amber-400 dark:border-amber-600/70 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-medium'
+                : 'border-slate-200 dark:border-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+            }`}
+            title="Toggle live thinking process stream (Opt-in)"
+          >
+            <Brain className={`w-3.5 h-3.5 ${streamThinking ? 'text-amber-500 animate-pulse' : 'text-slate-400'}`} />
+            <span>Thinking: {streamThinking ? 'ON' : 'OFF'}</span>
+          </button>
+
           {/* Python Sandbox badge */}
           <button
             onClick={() => setPythonEnabled(!pythonEnabled)}
@@ -371,6 +413,7 @@ export default function DemoPage() {
           }}
           allowRegeneration={true}
           allowEditingUserMessages={true}
+          streamThinking={streamThinking}
         />
       </div>
 
@@ -523,6 +566,32 @@ export default function DemoPage() {
                 <p className="text-[10px] text-slate-400 mt-1">
                   API keys are held in memory during the session and sent securely via server proxy.
                 </p>
+              </div>
+
+              {/* Stream Thinking Opt-In Toggle */}
+              <div className="flex items-center justify-between p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800 dark:text-slate-200">
+                    <Brain className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Stream Thinking Process (Opt-in)</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    Display the AI model's internal step-by-step reasoning in real time while generating.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleStreamThinking}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    streamThinking ? 'bg-amber-600' : 'bg-slate-300 dark:bg-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                      streamThinking ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
               </div>
             </div>
 

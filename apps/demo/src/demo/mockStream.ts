@@ -16,12 +16,30 @@ function delay(ms: number) {
 export async function* simulateChatStream(payload: ChatPayload): AsyncIterable<ChatStreamEvent> {
   const prompt = payload.currentPrompt.toLowerCase();
 
-  // 1. Emit Thinking Process
-  yield {
-    type: 'thinking-delta',
-    delta: 'Analyzing user prompt and available skills in catalog...\n',
-  };
-  await delay(200);
+  // 1. Emit Thinking Process (Simulates live stream when opted in)
+  if (payload.streamThinking) {
+    const thoughts = [
+      'Analyzing user request and available domain skills in catalog...\n',
+      'Identified relevant domain skills: "architecture-diagrammer" and "markdown-specialist".\n',
+      'Formulating execution plan:\n',
+      '  - Step 1: Consult architecture diagrammer skill guidelines.\n',
+      '  - Step 2: Construct full system specification and Mermaid topology in workspace VFS.\n',
+      '  - Step 3: Present document in interactive artifact drawer.\n',
+      '  - Step 4: Deliver executive summary in chat feed.\n',
+    ];
+    for (const chunk of thoughts) {
+      for (const word of chunk.split(' ')) {
+        yield { type: 'thinking-delta', delta: word + ' ' };
+        await delay(35);
+      }
+    }
+  } else {
+    yield {
+      type: 'thinking-delta',
+      delta: 'Analyzing user prompt and available skills in catalog...\n',
+    };
+    await delay(200);
+  }
 
   if (
     prompt.includes('microelectronic') ||

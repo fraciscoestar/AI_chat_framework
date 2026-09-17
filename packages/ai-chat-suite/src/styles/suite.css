@@ -106,50 +106,85 @@
   stroke: #71717a !important;
 }
 
-/* Ensure text on arrows renders cleanly in front of lines with solid background */
-.ai-chat-suite-root .mermaid-render-output svg .edgeLabels,
-.ai-chat-suite-root .mermaid-render-output svg .edgeLabel {
-  z-index: 30 !important;
+/* Prevent text clipping in foreignObject across browsers */
+.ai-chat-suite-root .mermaid-render-output svg foreignObject {
+  overflow: visible !important;
 }
 
+.ai-chat-suite-root .mermaid-render-output svg foreignObject[width="0"],
+.ai-chat-suite-root .mermaid-render-output svg foreignObject[height="0"] {
+  display: none !important;
+}
+
+/* Edge labels styling: clean pill badges that overlay connector lines */
 .ai-chat-suite-root .mermaid-render-output svg .edgeLabel {
-  background-color: #ffffff !important;
-  color: #0f172a !important;
-  fill: #0f172a !important;
-  padding: 2px 6px !important;
+  background-color: transparent !important;
+  fill: currentColor !important;
+  padding: 0 !important;
+}
+
+.ai-chat-suite-root .mermaid-render-output svg .edgeLabel span {
+  background-color: transparent !important;
+  padding: 0 !important;
+}
+
+.ai-chat-suite-root .mermaid-render-output svg .edgeLabel p {
+  background-color: transparent !important;
+  margin: 0 !important;
+  line-height: 1.2 !important;
+  padding: 0 !important;
+}
+
+/* Light mode badge styling */
+.ai-chat-suite-root .mermaid-render-output svg .edgeLabel .labelBkg {
+  background-color: rgba(255, 255, 255, 0.92) !important;
+  border: 1px solid rgba(203, 213, 225, 0.8) !important;
   border-radius: 4px !important;
-  font-weight: 500 !important;
+  padding: 2px 6px !important;
 }
 
-.ai-chat-suite-root .mermaid-render-output svg .edgeLabel span,
+.ai-chat-suite-root .mermaid-render-output svg .edgeLabel text,
 .ai-chat-suite-root .mermaid-render-output svg .edgeLabel p,
-.ai-chat-suite-root .mermaid-render-output svg .edgeLabel div {
-  background-color: #ffffff !important;
+.ai-chat-suite-root .mermaid-render-output svg .edgeLabel span {
   color: #0f172a !important;
   fill: #0f172a !important;
+  font-weight: 500 !important;
+  font-size: 11px !important;
 }
 
 .ai-chat-suite-root .mermaid-render-output svg .edgeLabel rect {
-  fill: #ffffff !important;
-  opacity: 1 !important;
+  fill: rgba(255, 255, 255, 0.92) !important;
+  stroke: rgba(203, 213, 225, 0.8) !important;
+  stroke-width: 1px !important;
+  rx: 4px !important;
+  ry: 4px !important;
+  opacity: 0.95 !important;
 }
 
-.ai-chat-suite-root.dark .mermaid-render-output svg .edgeLabel {
-  background-color: #18181a !important;
-  color: #f4f4f5 !important;
-  fill: #f4f4f5 !important;
+/* Dark mode badge styling */
+.ai-chat-suite-root.dark .mermaid-render-output svg .edgeLabel .labelBkg {
+  background-color: rgba(30, 30, 32, 0.92) !important;
+  border: 1px solid rgba(82, 82, 91, 0.7) !important;
+  border-radius: 4px !important;
+  padding: 2px 6px !important;
 }
 
-.ai-chat-suite-root.dark .mermaid-render-output svg .edgeLabel span,
+.ai-chat-suite-root.dark .mermaid-render-output svg .edgeLabel text,
 .ai-chat-suite-root.dark .mermaid-render-output svg .edgeLabel p,
-.ai-chat-suite-root.dark .mermaid-render-output svg .edgeLabel div {
-  background-color: #18181a !important;
+.ai-chat-suite-root.dark .mermaid-render-output svg .edgeLabel span {
   color: #f4f4f5 !important;
   fill: #f4f4f5 !important;
+  font-weight: 500 !important;
+  font-size: 11px !important;
 }
 
 .ai-chat-suite-root.dark .mermaid-render-output svg .edgeLabel rect {
-  fill: #18181a !important;
-  opacity: 1 !important;
+  fill: rgba(30, 30, 32, 0.92) !important;
+  stroke: rgba(82, 82, 91, 0.7) !important;
+  stroke-width: 1px !important;
+  rx: 4px !important;
+  ry: 4px !important;
+  opacity: 0.95 !important;
 }
+
 

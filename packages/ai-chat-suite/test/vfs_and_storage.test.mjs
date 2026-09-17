@@ -441,4 +441,225 @@ test('Workspace Tools: File Presentation & Selective Editing', async (t) => {
   });
 });
 
+test('StreamTagProcessor handles real-time thinking and tool execution', async (t) => {
+  class StreamTagProcessor {
+    buffer = '';
+    state = 'text';
+    toolCallBuffer = '';
+
+    THINK_OPEN_TAGS = ['<think>', '<thought>', '<reasoning>', '<thinking>'];
+    THINK_CLOSE_TAGS = ['</think>', '</thought>', '</reasoning>', '</thinking>'];
+    TOOL_OPEN_TAGS = ['<tool_call>', '```tool_call'];
+    TOOL_CLOSE_TAGS = ['</tool_call>', '```'];
+
+    constructor(onText, onThinking, onToolCall) {
+      this.onText = onText;
+      this.onThinking = onThinking;
+      this.onToolCall = onToolCall;
+    }
+
+    process(chunk) {
+      this.buffer += chunk;
+      this.flush(false);
+    }
+
+    finish() {
+      this.flush(true);
+    }
+
+    flush(isEnd) {
+      while (this.buffer.length > 0) {
+        const lowerBuf = this.buffer.toLowerCase();
+
+        if (this.state === 'text') {
+          let earliestIdx = -1;
+          let matchedTagLen = 0;
+          let matchedType = 'think';
+
+          for (const tag of this.THINK_OPEN_TAGS) {
+            const idx = lowerBuf.indexOf(tag.toLowerCase());
+            if (idx !== -1 && (earliestIdx === -1 || idx < earliestIdx)) {
+              earliestIdx = idx;
+              matchedTagLen = tag.length;
+              matchedType = 'think';
+            }
+          }
+
+          for (const tag of this.TOOL_OPEN_TAGS) {
+            const idx = lowerBuf.indexOf(tag.toLowerCase());
+            if (idx !== -1 && (earliestIdx === -1 || idx < earliestIdx)) {
+              earliestIdx = idx;
+              matchedTagLen = tag.length;
+              matchedType = 'tool';
+            }
+          }
+
+          if (earliestIdx !== -1) {
+            if (earliestIdx > 0) {
+              this.onText(this.buffer.slice(0, earliestIdx));
+            }
+            this.buffer = this.buffer.slice(earliestIdx + matchedTagLen);
+            if (matchedType === 'think') {
+              this.state = 'think';
+            } else {
+              this.state = 'tool_call';
+              this.toolCallBuffer = '';
+            }
+          } else {
+            if (!isEnd) {
+              let maxKeep = 0;
+              for (const p of [...this.THINK_OPEN_TAGS, ...this.TOOL_OPEN_TAGS]) {
+                const lowerP = p.toLowerCase();
+                for (let len = 1; len < lowerP.length; len++) {
+                  if (lowerBuf.endsWith(lowerP.slice(0, len))) {
+                    maxKeep = Math.max(maxKeep, len);
+                  }
+                }
+              }
+              if (maxKeep > 0) {
+                const safeText = this.buffer.slice(0, -maxKeep);
+                if (safeText) this.onText(safeText);
+                this.buffer = this.buffer.slice(-maxKeep);
+                return;
+              }
+            }
+            this.onText(this.buffer);
+            this.buffer = '';
+          }
+        } else if (this.state === 'think') {
+          let earliestEndIdx = -1;
+          let matchedEndTagLen = 0;
+
+          for (const tag of this.THINK_CLOSE_TAGS) {
+            const idx = lowerBuf.indexOf(tag.toLowerCase());
+            if (idx !== -1 && (earliestEndIdx === -1 || idx < earliestEndIdx)) {
+              earliestEndIdx = idx;
+              matchedEndTagLen = tag.length;
+            }
+          }
+
+          if (earliestEndIdx !== -1) {
+            if (earliestEndIdx > 0) {
+              this.onThinking(this.buffer.slice(0, earliestEndIdx));
+            }
+            this.buffer = this.buffer.slice(earliestEndIdx + matchedEndTagLen);
+            this.state = 'text';
+          } else {
+            if (!isEnd) {
+              let keep = 0;
+              for (const endTag of this.THINK_CLOSE_TAGS) {
+                const lowerEnd = endTag.toLowerCase();
+                for (let len = 1; len < lowerEnd.length; len++) {
+                  if (lowerBuf.endsWith(lowerEnd.slice(0, len))) {
+                    keep = Math.max(keep, len);
+                  }
+                }
+              }
+              if (keep > 0) {
+                const safeThinking = this.buffer.slice(0, -keep);
+                if (safeThinking) this.onThinking(safeThinking);
+                this.buffer = this.buffer.slice(-keep);
+                return;
+              }
+            }
+            this.onThinking(this.buffer);
+            this.buffer = '';
+          }
+        } else if (this.state === 'tool_call') {
+          let earliestEndIdx = -1;
+          let matchedEndTagLen = 0;
+
+          for (const tag of this.TOOL_CLOSE_TAGS) {
+            const idx = lowerBuf.indexOf(tag.toLowerCase());
+            if (idx !== -1 && (earliestEndIdx === -1 || idx < earliestEndIdx)) {
+              earliestEndIdx = idx;
+              matchedEndTagLen = tag.length;
+            }
+          }
+
+          if (earliestEndIdx !== -1) {
+            this.toolCallBuffer += this.buffer.slice(0, earliestEndIdx);
+            this.buffer = this.buffer.slice(earliestEndIdx + matchedEndTagLen);
+            this.onToolCall(this.toolCallBuffer.trim());
+            this.toolCallBuffer = '';
+            this.state = 'text';
+          } else {
+            if (isEnd) {
+              this.toolCallBuffer += this.buffer;
+              this.onToolCall(this.toolCallBuffer.trim());
+              this.toolCallBuffer = '';
+              this.buffer = '';
+            } else {
+              let keep = 0;
+              for (const tag of this.TOOL_CLOSE_TAGS) {
+                const lowerTag = tag.toLowerCase();
+                for (let len = 1; len < lowerTag.length; len++) {
+                  if (lowerBuf.endsWith(lowerTag.slice(0, len))) {
+                    keep = Math.max(keep, len);
+                  }
+                }
+              }
+              if (keep > 0) {
+                this.toolCallBuffer += this.buffer.slice(0, -keep);
+                this.buffer = this.buffer.slice(-keep);
+                return;
+              } else {
+                this.toolCallBuffer += this.buffer;
+                this.buffer = '';
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  await t.test('extracts thinking tags case-insensitively across fragmented chunks', () => {
+    let receivedText = '';
+    let receivedThinking = '';
+    let receivedToolCalls = [];
+
+    const processor = new StreamTagProcessor(
+      (text) => { receivedText += text; },
+      (think) => { receivedThinking += think; },
+      (tool) => { receivedToolCalls.push(tool); }
+    );
+
+    processor.process('<THINK>');
+    processor.process('Step 1: I need to check ');
+    processor.process('skills and plan files.\n');
+    processor.process('</think>');
+    processor.process('I will now invoke ');
+    processor.process('<tool_call>{"name": "read_skill", ');
+    processor.process('"args": {"skillId": "architecture-diagrammer"}}</tool_call>');
+    processor.process('Done.');
+    processor.finish();
+
+    assert.equal(receivedThinking, 'Step 1: I need to check skills and plan files.\n');
+    assert.equal(receivedToolCalls.length, 1);
+    const parsedCall = JSON.parse(receivedToolCalls[0]);
+    assert.equal(parsedCall.name, 'read_skill');
+    assert.equal(parsedCall.args.skillId, 'architecture-diagrammer');
+    assert.equal(receivedText, 'I will now invoke Done.');
+  });
+
+  await t.test('handles <thought> tags without leaking into text stream', () => {
+    let receivedText = '';
+    let receivedThinking = '';
+
+    const processor = new StreamTagProcessor(
+      (text) => { receivedText += text; },
+      (think) => { receivedThinking += think; },
+      () => {}
+    );
+
+    processor.process('<Thought>Designing microservices topology</Thought># Architecture Document');
+    processor.finish();
+
+    assert.equal(receivedThinking, 'Designing microservices topology');
+    assert.equal(receivedText, '# Architecture Document');
+  });
+});
+
+
 
