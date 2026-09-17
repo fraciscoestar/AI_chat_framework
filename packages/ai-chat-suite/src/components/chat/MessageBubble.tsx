@@ -193,6 +193,33 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         </div>
 
         <div className="flex-1 min-w-0">
+          {/* Thinking Collapsible Accordion (DeepSeek, Claude 3.7, Qwen, etc.) */}
+          {message.thinking && (
+            <div className="mb-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/30 overflow-hidden text-xs">
+              <button
+                type="button"
+                onClick={() => setThinkingExpanded(!thinkingExpanded)}
+                className="w-full px-3 py-1.5 flex items-center justify-between text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+              >
+                <div className="flex items-center gap-1.5 font-medium">
+                  <Brain className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Thought Process</span>
+                </div>
+                {thinkingExpanded ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                )}
+              </button>
+
+              {thinkingExpanded && (
+                <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 text-xs italic leading-relaxed whitespace-pre-wrap font-serif">
+                  {message.thinking}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Chronological Execution Blocks (Claude-style) */}
           {message.executionBlocks && message.executionBlocks.length > 0 ? (
             <div className="space-y-2 select-text">
@@ -268,33 +295,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             </div>
           ) : (
             <>
-              {/* Legacy: Thinking Collapsible Accordion */}
-              {message.thinking && (
-                <div className="mb-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/30 overflow-hidden text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setThinkingExpanded(!thinkingExpanded)}
-                    className="w-full px-3 py-1.5 flex items-center justify-between text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
-                  >
-                    <div className="flex items-center gap-1.5 font-medium">
-                      <Brain className="w-3.5 h-3.5 text-amber-500" />
-                      <span>Thought Process</span>
-                    </div>
-                    {thinkingExpanded ? (
-                      <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-                    ) : (
-                      <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                    )}
-                  </button>
-
-                  {thinkingExpanded && (
-                    <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 text-xs italic leading-relaxed whitespace-pre-wrap font-serif">
-                      {message.thinking}
-                    </div>
-                  )}
-                </div>
-              )}
-
               {/* Legacy: Tool Invocations */}
               {message.toolCalls && message.toolCalls.length > 0 && (
                 <div className="my-2 space-y-1">

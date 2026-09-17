@@ -100,7 +100,9 @@ export default function DemoPage() {
         setTheme('dark');
       }
 
-      // Also restore saved live endpoint config if present
+      // Also restore saved mode and live endpoint config if present
+      const savedMode = localStorage.getItem('ai_chat_mode') as 'simulator' | 'live' | null;
+      if (savedMode === 'simulator' | savedMode === 'live') setMode(savedMode);
       const savedEndpoint = localStorage.getItem('ai_chat_endpoint');
       if (savedEndpoint) setEndpointUrl(savedEndpoint);
       const savedModel = localStorage.getItem('ai_chat_model');
@@ -108,6 +110,8 @@ export default function DemoPage() {
         setModel(savedModel);
         setSelectedModelId(savedModel);
       }
+      const savedApiKey = localStorage.getItem('ai_chat_api_key');
+      if (savedApiKey) setApiKey(savedApiKey);
     } catch {
       // Ignore localStorage errors
     }
@@ -125,12 +129,31 @@ export default function DemoPage() {
     });
   };
 
-  const handleSaveEndpointConfig = () => {
+  const handleSetMode = (newMode: 'simulator' | 'live') => {
+    setMode(newMode);
     try {
-      localStorage.setItem('ai_chat_endpoint', endpointUrl);
-      localStorage.setItem('ai_chat_model', model);
+      localStorage.setItem('ai_chat_mode', newMode);
     } catch {
       // Ignore
+    }
+  };
+
+  const handleSaveEndpointConfig = () => {
+    const trimmedModel = model.trim();
+    try {
+      localStorage.setItem('ai_chat_mode', mode);
+      localStorage.setItem('ai_chat_endpoint', endpointUrl);
+      localStorage.setItem('ai_chat_model', trimmedModel);
+      if (apiKey) {
+        localStorage.setItem('ai_chat_api_key', apiKey);
+      } else {
+        localStorage.removeItem('ai_chat_api_key');
+      }
+    } catch {
+      // Ignore
+    }
+    if (trimmedModel) {
+      setSelectedModelId(trimmedModel);
     }
     setShowSettings(false);
   };
@@ -141,29 +164,69 @@ export default function DemoPage() {
     setSelectedModelId(presetModel);
   };
 
+  // Dynamic models list: In live mode, expose the custom model in the picker if not already preset
+  const currentModels = useMemo(() => {
+    const trimmedModel = model.trim();
+    if (mode === 'live' && trimmedModel && !DEMO_MODELS.some((m) => m.id === trimmedModel)) {
+      return [
+        {
+          id: trimmedModel,
+          name: trimmedModel,
+          description: `Custom live model (${endpointUrl})`,
+          badge: 'Custom Live',
+        },
+        ...DEMO_MODELS,
+      ];
+    }
+    return DEMO_MODELS;
+  }, [mode, model, endpointUrl]);
+
   // Streaming handler passed to <AIChatSuite />
   const handleSendMessage = useMemo(() => {
     return async function* (payload: ChatPayload): AsyncIterable<ChatStreamEvent> {
       if (mode === 'simulator') {
         yield* simulateChatStream(payload);
       } else {
+        // In live mode, ensure the explicitly configured or selected model is actually used
+        const targetModel =
+          mode === 'live' && model.trim()
+            ? model.trim()
+            : (payload.model || selectedModelId || model);
+
         // Call /api/chat with custom endpoint URL and parameters
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: payload.messages,
-            currentPrompt: payload.currentPrompt,
-            endpointUrl,
-            model: payload.model || selectedModelId || model,
-            effort: payload.effort,
-            apiKey,
-          }),
-        });
+        let res: Response;
+        try {
+          res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              messages: payload.messages,
+              currentPrompt: payload.currentPrompt,
+              endpointUrl,
+              model: targetModel,
+              effort: payload.effort,
+              apiKey,
+            }),
+          });
+        } catch (fetchErr: unknown) {
+          const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+          yield {
+            type: 'error',
+            message: `Connection failed: ${msg}. Check if your dev server or local network is reachable.`,
+          };
+          return;
+        }
 
         if (!res.ok || !res.body) {
-          const err = await res.json().catch(() => ({ error: 'Network error' }));
-          yield { type: 'error', message: err.error || `Failed to fetch from ${endpointUrl}` };
+          let errorDetail = '';
+          try {
+            const errJson = await res.json();
+            errorDetail = errJson.error || JSON.stringify(errJson);
+          } catch {
+            const rawText = await res.text().catch(() => '');
+            errorDetail = rawText.slice(0, 300) || `HTTP ${res.status} ${res.statusText}`;
+          }
+          yield { type: 'error', message: errorDetail || `Failed to fetch from ${endpointUrl}` };
           return;
         }
 
@@ -171,27 +234,35 @@ export default function DemoPage() {
         const decoder = new TextDecoder();
         let buffer = '';
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
 
-          for (const line of lines) {
-            if (line.trim()) {
-              try {
-                const event: ChatStreamEvent = JSON.parse(line.trim());
-                yield event;
-              } catch {
-                // Ignore parse errors
+            for (const line of lines) {
+              if (line.trim()) {
+                try {
+                  const event: ChatStreamEvent = JSON.parse(line.trim());
+                  yield event;
+                  if (event.type === 'done') {
+                    return;
+                  }
+                } catch {
+                  // Ignore parse errors
+                }
               }
             }
           }
+        } catch (streamReadErr) {
+          // If stream ended after yielding events, do not crash on TCP connection termination
+          console.debug('[handleSendMessage] Stream reader closed:', streamReadErr);
         }
       }
     };
-  }, [mode, endpointUrl, model, apiKey]);
+  }, [mode, endpointUrl, model, apiKey, selectedModelId]);
 
   return (
     <div className={`h-screen w-screen flex flex-col overflow-hidden ${theme === 'dark' ? 'dark' : ''}`}>
@@ -208,7 +279,12 @@ export default function DemoPage() {
 
           <div className="hidden md:flex items-center gap-1 border-l border-slate-300 dark:border-slate-700 pl-3">
             <button
-              onClick={() => setMode('simulator')}
+              onClick={() => {
+                handleSetMode('simulator');
+                if (!DEMO_MODELS.some((m) => m.id === selectedModelId)) {
+                  setSelectedModelId(DEMO_MODELS[0].id);
+                }
+              }}
               className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full transition-colors ${
                 mode === 'simulator'
                   ? 'bg-amber-600 text-white font-medium shadow-xs'
@@ -220,7 +296,12 @@ export default function DemoPage() {
             </button>
 
             <button
-              onClick={() => setMode('live')}
+              onClick={() => {
+                handleSetMode('live');
+                if (model.trim()) {
+                  setSelectedModelId(model.trim());
+                }
+              }}
               className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full transition-colors ${
                 mode === 'live'
                   ? 'bg-amber-600 text-white font-medium shadow-xs'
@@ -280,9 +361,14 @@ export default function DemoPage() {
           pythonExecutionEnabled={pythonEnabled}
           allowEphemeralChats={true}
           theme={theme}
-          models={DEMO_MODELS}
+          models={currentModels}
           selectedModelId={selectedModelId}
-          onSelectModel={(id) => setSelectedModelId(id)}
+          onSelectModel={(id) => {
+            setSelectedModelId(id);
+            if (mode === 'live') {
+              setModel(id);
+            }
+          }}
           allowRegeneration={true}
           allowEditingUserMessages={true}
         />
@@ -312,7 +398,12 @@ export default function DemoPage() {
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
-                    onClick={() => setMode('simulator')}
+                    onClick={() => {
+                      handleSetMode('simulator');
+                      if (!DEMO_MODELS.some((m) => m.id === selectedModelId)) {
+                        setSelectedModelId(DEMO_MODELS[0].id);
+                      }
+                    }}
                     className={`p-2 rounded-lg border text-left transition-colors ${
                       mode === 'simulator'
                         ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 font-semibold'
@@ -326,7 +417,12 @@ export default function DemoPage() {
                   </button>
 
                   <button
-                    onClick={() => setMode('live')}
+                    onClick={() => {
+                      handleSetMode('live');
+                      if (model.trim()) {
+                        setSelectedModelId(model.trim());
+                      }
+                    }}
                     className={`p-2 rounded-lg border text-left transition-colors ${
                       mode === 'live'
                         ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 font-semibold'
